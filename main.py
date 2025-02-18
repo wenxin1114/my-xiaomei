@@ -2,16 +2,26 @@ from funasr import AutoModel
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
 import pyaudio
 import numpy as np
-import time
+from dotenv import load_dotenv
 from openai import OpenAI
+import os
+import edge_tts
+import asyncio
 
-client = OpenAI(api_key="", base_url="https://api.deepseek.com")
+from playsound import playsound
+
+# 加载 .env 文件
+load_dotenv()
+client = OpenAI(api_key=os.getenv("DEEPSEEK_KEY"), base_url="https://api.deepseek.com")
+
+# 初始化文本转语音引擎
+VOICE = "zh-CN-YatingNeural"
 
 CHUNK = 1024
 FORMAT = pyaudio.paFloat32
 CHANNELS = 1
 RATE = 16000
-SILENCE_THRESHOLD = 0.15  # 提高阈值
+SILENCE_THRESHOLD = 0.01  # 提高阈值
 MIN_SPEECH_FRAMES = 15
 SILENCE_FRAMES = 30  # 减少静音判断时间
 
@@ -19,16 +29,70 @@ def detect_speech(audio_chunk):
     volume = np.max(np.abs(audio_chunk))
     return volume > SILENCE_THRESHOLD
 
+chat_history = [{"role": "system", "content": os.getenv("CALL_WORD")}]
+
+
+async def play_audio(text):
+    if not text.strip():  # Check if the text is empty
+        print("没有接收到有效的文本。")
+        return
+    # zh-CN-XiaoxiaoNeural：中文（简体）女声
+    # zh-CN-YunxiNeural：中文（简体）男声
+    # zh-CN-XiaoyiNeural：中文（简体）女声
+    # zh-TW-HsiaoChenNeural：中文（繁体）女声
+    # zh-TW-YunJheNeural：中文（繁体）男声
+    # zh-HK-HiuGaaiNeural：粤语女声
+    # zh-HK-WanLungNeural：粤语男声
+    # zh-CN-shaanxi-XiaoniNeural：陕西方言女声
+    # zh-CN-liaoning-XiaobeiNeural：东北方言女声
+    # zh-TW-HsiaoYuNeural：台湾口音女声
+    # 选择适合女朋友的音色
+    VOICE = "zh-CN-XiaoyiNeural"  # 选择音色
+    communicate = edge_tts.Communicate(
+        text,
+        VOICE,
+        rate='+0%',
+        volume='+0%',
+        pitch='+0Hz'
+    )
+    
+    # 创建目录并保存音频到文件
+    output_dir = "output_directory"  # 你想要的目录名
+    os.makedirs(output_dir, exist_ok=True)  # 创建目录（如果不存在）
+    output_file = os.path.abspath(os.path.join(output_dir, "output.mp3"))
+    
+    # 使用 save 方法直接保存音频到文件
+    await communicate.save(output_file)
+
+    # 打印文件路径
+    print(f"音频文件保存路径: {output_file}")
+
+    # 检查音频文件是否存在
+    if os.path.exists(output_file):
+        print("音频文件已成功保存。")
+        playsound(output_file)
+    else:
+        print("音频文件未能保存。")
+        return  # 退出函数
+
+
+
 def ask_ai_model(text):
+    chat_history.append({"role": "user", "content": text})
     response = client.chat.completions.create(
         model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant"},
-            {"role": "user", "content": text},
-        ],
+        messages=chat_history,
         stream=False
     )
-    print(f"Model answer: {response.choices[0].message.content}")
+    answer = response.choices[0].message.content
+    print(f"Model answer: {answer}")
+    
+    if not answer.strip():  # Check if the answer is empty
+        print("模型没有返回有效的答案。")
+        return
+    
+    asyncio.run(play_audio(answer))
+
 
 def continuous_listen():
     p = pyaudio.PyAudio()
@@ -122,3 +186,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
